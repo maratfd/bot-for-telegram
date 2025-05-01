@@ -1,5 +1,5 @@
 import logging
-from aiogram import Bot, Dispatcher, types, F
+from aiogram import Bot, Dispatcher, types, F, Router
 from aiogram.filters import Command
 from aiogram.types import (
     Message,
@@ -14,11 +14,16 @@ from datetime import datetime
 import sqlite3
 import requests
 from typing import Dict, Any
+from telegram import Update
+from telegram.ext import Application, CommandHandler, MessageHandler, filters, ContextTypes
+from aiogram.client.default import DefaultBotProperties
+
+DEEPSEEK_URL = "https://www.deepseek.com/chat"
 
 # ====== НАСТРОЙКИ ====== #
-BOT_TOKEN = "YOUR_BOT_TOKEN"
+#BOT_TOKEN = ''
 DEEPSEEK_API_KEY = "your_deepseek_api_key"
-OPENAI_API_KEY = "your_openai_api_key"
+OPENAI_API_KEY = ''
 DB_NAME = "bot_history.db"
 
 # Настройка логгирования
@@ -26,7 +31,10 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 # Инициализация бота
-bot = Bot(token=BOT_TOKEN, parse_mode=ParseMode.HTML)
+bot = Bot(
+    #token='',
+    default=DefaultBotProperties(parse_mode=ParseMode.HTML)
+)
 dp = Dispatcher()
 
 # Глобальные переменные
@@ -161,7 +169,7 @@ async def generate_text(user_id: int, prompt: str) -> str:
     
     if settings["model"] == "deepseek":
         return await generate_with_api(
-            url="https://api.deepseek.ai/v1/chat/completions",
+            url=DEEPSEEK_URL,
             api_key=DEEPSEEK_API_KEY,
             model="deepseek-chat",
             prompt=prompt,
