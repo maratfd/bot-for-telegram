@@ -15,7 +15,7 @@ from dotenv import load_dotenv
 ADMIN_ID = 521188043
 
 # Инициализация бота и диспетчера
-bot = Bot(token='7125055805:AAGm9c3MUZGsVXLV5Dgmxt914hTJ47bz1Lg')
+bot = Bot(token='')
 storage = MemoryStorage()
 dp = Dispatcher(storage=storage)
 router = Router()
