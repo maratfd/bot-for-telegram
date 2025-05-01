@@ -1,25 +1,29 @@
 import os
-from dotenv import load_dotenv
-from aiogram import Bot, Dispatcher, types
-from aiogram.fsm.storage.memory import MemoryStorage
+import logging
+from aiogram import Bot, Dispatcher, Router, types, F
+from aiogram.filters import Command
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
-from aiogram.types import LabeledPrice, InlineKeyboardMarkup, InlineKeyboardButton
-import logging
+from aiogram.fsm.storage.memory import MemoryStorage
+from aiogram.types import LabeledPrice, InlineKeyboardButton, InlineKeyboardMarkup
+from aiogram.utils.keyboard import InlineKeyboardBuilder
+from dotenv import load_dotenv
 
-from database import Database
+# Загрузка конфигурации
+#load_dotenv()
+#BOT_TOKEN = os.getenv("BOT_TOKEN")
+ADMIN_ID = 521188043
 
-# Загрузка конфигов
-load_dotenv()
-BOT_TOKEN = os.getenv("BOT_TOKEN")
-PROVIDER_TOKEN = os.getenv("PROVIDER_TOKEN")
-ADMIN_ID = int(os.getenv("ADMIN_ID"))
-
-# Инициализация бота
-bot = Bot(token=BOT_TOKEN)
+# Инициализация бота и диспетчера
+bot = Bot(token='7125055805:AAGm9c3MUZGsVXLV5Dgmxt914hTJ47bz1Lg')
 storage = MemoryStorage()
-dp = Dispatcher(bot, storage=storage)
-db = Database("database.db")
+dp = Dispatcher(storage=storage)
+router = Router()
+dp.include_router(router)
+
+# Настройка логирования
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 
 # Состояния FSM
 class ProductState(StatesGroup):
@@ -28,138 +32,90 @@ class ProductState(StatesGroup):
     price = State()
     photo = State()
 
-# Команда /start
-@dp.message_handler(commands=['start'])
-async def start(message: types.Message):
-    user_id = message.from_user.id
-    if not db.user_exists(user_id):
-        db.add_user(user_id)
-    
-    keyboard = InlineKeyboardMarkup()
-    keyboard.add(InlineKeyboardButton("🛍️ Каталог", callback_data="catalog"))
-    keyboard.add(InlineKeyboardButton("🛒 Корзина", callback_data="cart"))
-    
+# ========== ОБРАБОТЧИКИ КОМАНД ==========
+@router.message(Command("start"))
+async def start_handler(message: types.Message):
+    builder = InlineKeyboardBuilder()
+    builder.add(
+        InlineKeyboardButton(text="🛍️ Каталог", callback_data="show_catalog"),
+        InlineKeyboardButton(text="🛒 Корзина", callback_data="show_cart")
+    )
     await message.answer(
         "👋 Добро пожаловать в магазин! Выберите действие:",
-        reply_markup=keyboard
+        reply_markup=builder.as_markup()
     )
 
-# Показать каталог
-@dp.callback_query_handler(lambda c: c.data == 'catalog')
+# ========== ОБРАБОТЧИКИ CALLBACK ==========
+@router.callback_query(F("show_catalog"))
 async def show_catalog(callback: types.CallbackQuery):
-    products = db.get_products()
-    keyboard = InlineKeyboardMarkup()
+    # Здесь должна быть логика загрузки товаров из БД
+    products = [
+        {"id": 1, "name": "Товар 1", "price": 1000},
+        {"id": 2, "name": "Товар 2", "price": 2000}
+    ]
     
+    builder = InlineKeyboardBuilder()
     for product in products:
-        keyboard.add(
-            InlineKeyboardButton(
-                f"{product[1]} - {product[3]}₽",
-                callback_data=f"product_{product[0]}"
-            )
+        builder.button(
+            text=f"{product['name']} - {product['price']}₽",
+            callback_data=f"product_{product['id']}"
         )
+    builder.adjust(1)
     
-    await bot.send_message(
-        callback.from_user.id,
-        "📦 **Каталог товаров**:",
-        reply_markup=keyboard
+    await callback.message.edit_text(
+        "📦 Каталог товаров:",
+        reply_markup=builder.as_markup()
     )
+    await callback.answer()
 
-# Показать товар
-@dp.callback_query_handler(lambda c: c.data.startswith('product_'))
+@router.callback_query(F(startswith="product_"))
 async def show_product(callback: types.CallbackQuery):
-    product_id = int(callback.data.split('_')[1])
-    product = db.get_product(product_id)
+    product_id = callback.data.split("_")[1]
+    # Здесь должна быть логика загрузки товара из БД
+    product = {
+        "name": f"Товар {product_id}",
+        "description": "Отличный товар!",
+        "price": 1000,
+        "photo": None  # Можно добавить file_id фото
+    }
     
-    keyboard = InlineKeyboardMarkup()
-    keyboard.add(InlineKeyboardButton("➕ Добавить в корзину", callback_data=f"add_to_cart_{product_id}"))
+    builder = InlineKeyboardBuilder()
+    builder.button(text="➕ Добавить в корзину", callback_data=f"add_{product_id}")
+    builder.button(text="🔙 Назад", callback_data="show_catalog")
+    builder.adjust(1)
     
-    await bot.send_photo(
-        callback.from_user.id,
-        photo=product[4],  # Фото товара
-        caption=f"**{product[1]}**\n\n{product[2]}\n\n💰 Цена: **{product[3]}₽**",
-        reply_markup=keyboard
-    )
+    if product['photo']:
+        await callback.message.delete()
+        await callback.message.answer_photo(
+            photo=product['photo'],
+            caption=f"<b>{product['name']}</b>\n\n{product['description']}\n\n💰 Цена: <b>{product['price']}₽</b>",
+            reply_markup=builder.as_markup()
+        )
+    else:
+        await callback.message.edit_text(
+            f"<b>{product['name']}</b>\n\n{product['description']}\n\n💰 Цена: <b>{product['price']}₽</b>",
+            reply_markup=builder.as_markup()
+        )
+    await callback.answer()
 
-# Добавить в корзину
-@dp.callback_query_handler(lambda c: c.data.startswith('add_to_cart_'))
-async def add_to_cart(callback: types.CallbackQuery):
-    user_id = callback.from_user.id
-    product_id = int(callback.data.split('_')[3])
-    db.add_to_cart(user_id, product_id)
-    await callback.answer("✅ Товар добавлен в корзину!")
-
-# Показать корзину
-@dp.callback_query_handler(lambda c: c.data == 'cart')
-async def show_cart(callback: types.CallbackQuery):
-    user_id = callback.from_user.id
-    cart_items = db.get_cart(user_id)
-    total = sum(item[3] for item in cart_items)  # Сумма товаров
-    
-    keyboard = InlineKeyboardMarkup()
-    keyboard.add(InlineKeyboardButton("💳 Оформить заказ", callback_data="checkout"))
-    
-    items_text = "\n".join([f"➡️ {item[1]} - {item[3]}₽" for item in cart_items])
-    await bot.send_message(
-        callback.from_user.id,
-        f"🛒 **Ваша корзина**:\n\n{items_text}\n\n💸 **Итого: {total}₽**",
-        reply_markup=keyboard
-    )
-
-# Оформление заказа (через Telegram Payments)
-@dp.callback_query_handler(lambda c: c.data == 'checkout')
-async def checkout(callback: types.CallbackQuery):
-    user_id = callback.from_user.id
-    cart_items = db.get_cart(user_id)
-    total = sum(item[3] for item in cart_items) * 100  # В копейках
-    
-    await bot.send_invoice(
-        chat_id=callback.from_user.id,
-        title="Оплата заказа",
-        description="Оплатите ваш заказ",
-        payload="order_payload",
-        provider_token=PROVIDER_TOKEN,
-        currency="RUB",
-        prices=[LabeledPrice(label="Общая сумма", amount=total)],
-        start_parameter="test"
-    )
-
-# Админ-панель (добавление товара)
-@dp.message_handler(commands=['add_product'], user_id=ADMIN_ID)
-async def add_product_start(message: types.Message):
-    await ProductState.name.set()
+# ========== АДМИН ПАНЕЛЬ ==========
+@router.message(Command("add_product"), lambda message: message.from_user.id == ADMIN_ID)
+async def add_product_start(message: types.Message, state: FSMContext):
+    await state.set_state(ProductState.name)
     await message.answer("📝 Введите название товара:")
 
-@dp.message_handler(state=ProductState.name)
+@router.message(ProductState.name)
 async def set_product_name(message: types.Message, state: FSMContext):
-    async with state.proxy() as data:
-        data['name'] = message.text
-    await ProductState.next()
+    await state.update_data(name=message.text)
+    await state.set_state(ProductState.description)
     await message.answer("📝 Введите описание товара:")
 
-@dp.message_handler(state=ProductState.description)
-async def set_product_description(message: types.Message, state: FSMContext):
-    async with state.proxy() as data:
-        data['description'] = message.text
-    await ProductState.next()
-    await message.answer("💰 Введите цену товара (в рублях):")
+# ========== ЗАПУСК БОТА ==========
+async def main():
+    logger.info("Starting bot...")
+    await bot.delete_webhook(drop_pending_updates=True)
+    await dp.start_polling(bot)
 
-@dp.message_handler(state=ProductState.price)
-async def set_product_price(message: types.Message, state: FSMContext):
-    async with state.proxy() as data:
-        data['price'] = int(message.text)
-    await ProductState.next()
-    await message.answer("📸 Пришлите фото товара:")
-
-@dp.message_handler(content_types=['photo'], state=ProductState.photo)
-async def set_product_photo(message: types.Message, state: FSMContext):
-    async with state.proxy() as data:
-        data['photo'] = message.photo[-1].file_id
-        db.add_product(data['name'], data['description'], data['price'], data['photo'])
-    
-    await state.finish()
-    await message.answer("✅ Товар успешно добавлен!")
-
-if __name__ == '__main__':
-    from aiogram import executor
-    executor.start_polling(dp, skip_updates=True)
-
+if __name__ == "__main__":
+    import asyncio
+    asyncio.run(main())
